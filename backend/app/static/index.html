@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Генератор страховых историй</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1rem; }
+  label { display: block; margin: .5rem 0; }
+  input, select { width: 100%; padding: .4rem; box-sizing: border-box; }
+  button { padding: .6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  td { padding: .3rem; border-bottom: 1px solid #eee; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .story { background: #f6f6f6; padding: 1rem; border-radius: 8px; white-space: pre-line; }
+  .source { color: #777; font-size: .85rem; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .disclaimer { color: #b00; font-weight: bold; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+<h1>Генератор страховых историй</h1>
+<p>MVP: смартфоны</p>
+
+<form id="form">
+  <fieldset>
+    <legend>Объект</legend>
+    <label>Марка <input name="brand" value="Apple" required></label>
+    <label>Модель <input name="model" value="iPhone 15" required></label>
+    <label>Цена покупки, руб. <input name="purchase_price" type="number" value="100000" min="1" required></label>
+    <label>Дата покупки <input name="purchase_date" type="date" value="2025-01-01" required></label>
+    <label>Состояние
+      <select name="condition">
+        <option value="excellent">Отличное</option>
+        <option value="good" selected>Хорошее</option>
+        <option value="fair">Удовлетворительное</option>
+      </select>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>Полис</legend>
+    <label>Страховая сумма, руб. <input name="sum_insured" type="number" value="100000" min="1" required></label>
+    <label>Франшиза, руб. <input name="deductible" type="number" value="3000" min="0" required></label>
+  </fieldset>
+  <fieldset>
+    <legend>Событие</legend>
+    <label>Тип
+      <select name="type">
+        <option value="screen_damage">Повреждение экрана</option>
+        <option value="water_damage">Залитие</option>
+        <option value="theft">Кража</option>
+        <option value="total_loss">Полная гибель</option>
+        <option value="other_damage">Иное повреждение</option>
+      </select>
+    </label>
+    <label>Дата события <input name="date" type="date" value="2025-07-01" required></label>
+    <label>Степень ущерба (для «иного повреждения»), 0–1 <input name="severity" type="number" value="0.5" min="0" max="1" step="0.05"></label>
+  </fieldset>
+  <button type="submit">Сгенерировать</button>
+</form>
+
+<div id="result"></div>
+
+<script>
+const SOURCE_LABELS = {
+  llm: "Текст написан Claude",
+  ollama: "Текст написан локальной моделью",
+  template: "Текст по шаблону (языковая модель недоступна)",
+};
+const fmt = n => n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+
+document.getElementById("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  const payload = {
+    phone: { brand: f.brand, model: f.model, purchase_price: +f.purchase_price,
+             purchase_date: f.purchase_date, condition: f.condition },
+    policy: { sum_insured: +f.sum_insured, deductible: +f.deductible },
+    event: { type: f.type, date: f.date, severity: +f.severity },
+  };
+  const out = document.getElementById("result");
+  const button = e.target.querySelector("button");
+  button.disabled = true;
+  button.textContent = "Генерация…";
+  let resp, body;
+  try {
+    resp = await fetch("/api/claims/estimate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    body = await resp.json();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Сгенерировать";
+  }
+  if (!resp.ok) {
+    out.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "error";
+    p.textContent = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    out.append(p);
+    return;
+  }
+  const c = body.compensation;
+  out.innerHTML = `
+    <h2>Прогноз выплаты: ${fmt(c.payout)} руб.</h2>
+    <p class="disclaimer"></p>
+    <div class="story"></div>
+    <p class="source">${SOURCE_LABELS[body.story_source] ?? body.story_source}</p>
+    <table>${c.steps.map(s => `<tr><td></td><td>${fmt(s.value)}</td></tr>`).join("")}</table>`;
+  out.querySelector(".disclaimer").textContent = body.disclaimer;
+  out.querySelector(".story").textContent = body.story;
+  out.querySelectorAll("td:first-child").forEach((td, i) => td.textContent = c.steps[i].label);
+});
+</script>
+</body>
+</html>
